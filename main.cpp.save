@@ -1,0 +1,255 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <dirent.h>
+#include <unistd.h>
+#include <algorithm>
+#include <signal.h>
+#include <cstring>
+
+using namespace std;
+
+/*
+MEMORY READING FROM /proc/meminfo
+---------------------------------
+Reads MemTotal and MemAvailable
+*/
+
+void readMemoryinfo(long &totalMem, long &freeMem){
+   ifstream file("/proc/meminfo");
+   string key,unit;
+   long value;
+   total=freeMem = 0;
+
+while(file >> key >> value >> unit){
+if(key == "MemTotal:"){
+    totalMem = value /1024;    //KB -> MB
+}
+
+if(key == "MemAvailable:"){
+freeMem = value / 1024;
+}
+}
+}
+/*
+CPU READING FROM /proc/stat
+-------------------------------
+Reads user, nice, sys, idle
+*/
+
+long long lastTotal = 0,lastIdle = 0;
+
+float readCpuUsage(){
+   ifstream file("/proc/stat");
+   string cpu;
+   long long user,nice,system,idle;
+
+file >> cpu >> user >> nice >> system >> idle;
+
+long long total =user+nice+system+idle;
+long long totalDiff = total - lastTotal;
+long long idleDiff = idle - lastIdle;
+
+float cpuPercent = 0;
+if(totalDiff !=0)
+    cpuPercent = (float)(totalDiff - idleDiff) * 100.0 /totalDiff;
+
+lastTotal = total;
+latIdle = idle;
+
+}
+
+struct Process{
+int pid;
+string name;
+long memoryKB;
+float cpuPercent;
+};
+
+
+
+bool isNumber(const string &s){
+  for(char c: s){
+      if(!isdigit(c)) return false;
+  return true;
+}
+
+
+/* ------------------------------------------
+   GET PROCESS LIST FROM /proc
+   - name from /proc/[pid]/comm
+   - memory from /proc/[pid]/statm (pages -> KB)
+   ------------------------------------------ */
+
+vector<Process> getProcesses(){
+    vector<Process> result;
+    DIR *dir = opendir("/proc");
+    if (!dir) return result;
+
+struct dirent * entry;
+while((entry = readdir(dir))){
+    string dirname = entry->d_name;
+   if(!dir) return result;
+
+
+    int pid=0;
+try{ pid = stoi(dirname);}
+catch (...) { continue; }
+
+    string pname;
+{
+string path = "/proc/" + dirname + "/comm";
+ifstream f(path);
+if (f.good()) getline(f,pname);
+if(!pname.empty() && pname.back() == '\r') pname.pop_back();
+}
+
+//get process memory
+
+long mem = 0;
+{
+string path = "/proc/" + dirname +"/statm";
+ifstream f(path);
+if (f.good()){
+  long pages=0;
+  f >> pages;
+  mem = pages*4;  //pages -> KB
+ }
+}
+result.push_back({pid, pname, mem, 0.0f});
+}
+closed(dir);
+return result;
+}
+
+//Kill process
+
+void killProcess(int pid){
+ if(kill(pid,SIGKILL) == 0)
+    cout<< "Process " << pid << "killed.\n";
+ else
+    cerr << "Kill failed for pid " << pid
+         << ": "<<strerror(errno) <<"\n";
+}
+
+//Display Everything
+
+char sortMode = 'n';
+
+void display(){
+   long totalMem = 0, freeMem = 0;
+   reaMemoryInfo(totalMem, freeMem);
+
+float cpu = readCpuUsage();
+auto plist = getProcesses();
+
+if(sortMode == 'm'){
+   sort(plist.begin(), plist.end(), [](const Process &a, const Process &b){
+            return a.memoryKB > b.memoryKB;
+        });
+    }
+    else if (sortMode == 'c') {
+        sort(plist.begin(), plist.end(), [](const Process &a, const Process &b){
+            return a.cpuPercent > b.cpuPercent;
+        });
+    }
+
+    system("clear");
+
+    long usedMem = totalMem - freeMem;
+
+    cout << "=================== SYSTEM MONITOR ===================\n";
+    cout << "CPU Usage: " << fixed << setprecision(1) << cpu << "%  ";
+    cout << "Memory: " << usedMem << "MB / " << totalMem << "MB\n";
+
+    cout << "------------------------------------------------------\n";
+    cout << left << setw(8) << "PID"
+         << setw(14) << "Memory(KB)"
+         << setw(20) << "Name" << "\n";
+    cout << "------------------------------------------------------\n";
+
+    int count = 0;
+    for (auto &p : plist) {
+        cout << left << setw(8) << p.pid
+             << setw(14) << p.memoryKB
+             << setw(20) << p.name << "\n";
+        if (++count >= 120) break;
+    }
+
+    cout << "------------------------------------------------------\n";
+    cout << "[k PID] Kill | [m] Sort by Memory | [c] Sort by CPU | [n] No sort | [q] Quit\n";
+}
+
+/* ------------------------------------------
+   MAIN LOOP
+   ------------------------------------------ */
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    char cmd;
+    int pid;
+
+    readCPUUsage();  // Initialize baseline
+
+    while (true) {
+        display();
+        sleep(2);
+
+        if (cin.rdbuf()->in_avail()) {
+            cin >> cmd;
+
+            if (cmd == 'q') break;
+            if (cmd == 'm') { sortMode = 'm'; continue; }
+            if (cmd == 'c') { sortMode = 'c'; continue; }
+            if (cmd == 'n') { sortMode = 'n'; continue; }
+
+            if (cmd == 'k') {
+                if (cin >> pid) {
+                    killProcess(pid);
+                    sleep(1);
+                } else {
+                    cin.clear();
+                    string junk;
+                    getline(cin, junk);
+                    cerr << "Invalid PID.\n";
+                }
+            }
+            string rest;
+            getline(cin, rest);
+        }
+    }
+
+    cout << "Exiting system monitor.\n";
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
